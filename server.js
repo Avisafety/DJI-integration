@@ -32,7 +32,7 @@ function startDJIConnection() {
   };
 
   // DJI MQTT broker
-  const brokerUrl = "mqtts://mqtt-broker.dji.com:8883";
+  const brokerUrl = "mqtts://backend-api.djiservice.org:8883";
 
   mqttClient = mqtt.connect(brokerUrl, options);
 
