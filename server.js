@@ -23,6 +23,21 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
 
 // ---- HJELPEFUNKSJON: skriv til Supabase via REST (Metode A) ----
 async function insertTelemetry({ drone_id, lat, lon, alt = null, raw = null }) {
+  // ---- NY: bulk insert til Supabase ----
+async function insertTelemetryBulk(items) {
+  const url = `${SUPABASE_URL}/rest/v1/drone_telemetry`;
+
+  const res = await axios.post(url, items, {
+    headers: {
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      "Content-Type": "application/json",
+      Prefer: "return=representation"
+    }
+  });
+
+  return res.data;
+}
   const url = `${SUPABASE_URL}/rest/v1/drone_telemetry`;
 
   const payload = { drone_id, lat, lon, alt, raw };
