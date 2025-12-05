@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import axios from "axios";
+import mqtt from "mqtt";
 
 dotenv.config();
 
@@ -16,6 +17,11 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const DJI_APP_KEY = process.env.DJI_APP_KEY;          // fra DJI Developer
 const DJI_LICENSE_KEY = process.env.DJI_LICENSE_KEY;  // Basic License Key
 const DJI_API_URL = process.env.DJI_API_URL || "https://openapi.dji.com";
+
+// EMQX / MQTT
+const MQTT_URL = process.env.MQTT_URL;   // f.eks. mqtts://k122d012.ala.eu-central-1.emqxsl.com:8883
+const MQTT_USER = process.env.MQTT_USER; // f.eks. "avisafe"
+const MQTT_PASS = process.env.MQTT_PASS; // ditt passord
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   console.error("❌ Mangler SUPABASE_URL eller SUPABASE_SERVICE_ROLE_KEY i env!");
@@ -32,8 +38,8 @@ async function insertTelemetry({ drone_id, lat, lon, alt = null, raw = null }) {
       apikey: SUPABASE_SERVICE_ROLE_KEY,
       Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
       "Content-Type": "application/json",
-      Prefer: "return=representation"
-    }
+      Prefer: "return=representation",
+    },
   });
 
   return res.data;
@@ -48,8 +54,8 @@ async function insertTelemetryBulk(items) {
       apikey: SUPABASE_SERVICE_ROLE_KEY,
       Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
       "Content-Type": "application/json",
-      Prefer: "return=representation"
-    }
+      Prefer: "return=representation",
+    },
   });
 
   return res.data;
@@ -61,7 +67,6 @@ app.get("/", (req, res) => {
 });
 
 // ---- TEST-ROUTE: manuelt kall for å sjekke at alt funker ----
-// Bruk f.eks. POSTMAN/Insomnia eller curl.
 app.post("/test-insert", async (req, res) => {
   try {
     const {
@@ -69,7 +74,7 @@ app.post("/test-insert", async (req, res) => {
       lat = 63.4,
       lon = 10.4,
       alt = 100,
-      raw = null
+      raw = null,
     } = req.body || {};
 
     const data = await insertTelemetry({ drone_id, lat, lon, alt, raw });
@@ -130,7 +135,7 @@ app.post("/dji/telemetry", async (req, res) => {
         lat,
         lon,
         alt,
-        raw: msg
+        raw: msg,
       };
     });
 
@@ -139,7 +144,7 @@ app.post("/dji/telemetry", async (req, res) => {
     if (valid.length === 0) {
       return res.status(400).json({
         ok: false,
-        error: "Ingen gyldige posisjoner (lat/lon mangler)"
+        error: "Ingen gyldige posisjoner (lat/lon mangler)",
       });
     }
 
@@ -149,7 +154,7 @@ app.post("/dji/telemetry", async (req, res) => {
       ok: true,
       received: items.length,
       stored: data.length,
-      data
+      data,
     });
   } catch (err) {
     console.error("❌ Feil i /dji/telemetry:", err.response?.data || err.message);
@@ -164,8 +169,8 @@ app.get("/dji/test", async (req, res) => {
   try {
     const response = await axios.get(`${DJI_API_URL}/api/v1/app/version`, {
       headers: {
-        "x-api-key": DJI_APP_KEY
-      }
+        "x-api-key": DJI_APP_KEY,
+      },
     });
 
     res.json({ ok: true, data: response.data });
@@ -176,6 +181,7 @@ app.get("/dji/test", async (req, res) => {
       .json({ ok: false, error: err.response?.data || err.message });
   }
 });
+
 // ---- Hent siste posisjon per drone ----
 app.get("/telemetry/latest", async (req, res) => {
   try {
@@ -184,14 +190,14 @@ app.get("/telemetry/latest", async (req, res) => {
     const response = await axios.get(url, {
       headers: {
         apikey: SUPABASE_SERVICE_ROLE_KEY,
-        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`
-      }
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      },
     });
 
     res.json({
       ok: true,
       count: response.data.length,
-      data: response.data
+      data: response.data,
     });
   } catch (err) {
     console.error("❌ Feil i /telemetry/latest:", err.response?.data || err.message);
@@ -200,9 +206,60 @@ app.get("/telemetry/latest", async (req, res) => {
       .json({ ok: false, error: err.response?.data || err.message });
   }
 });
+
+// ---- MQTT / EMQX INTEGRASJON ----
+function startMqtt() {
+  if (!MQTT_URL) {
+    console.log("⚠️ Ingen MQTT_URL satt, hopper over MQTT-tilkobling");
+    return;
+  }
+
+  console.log("🔌 Kobler til EMQX...", MQTT_URL);
+
+  const client = mqtt.connect(MQTT_URL, {
+    username: MQTT_USER,
+    password: MQTT_PASS,
+  });
+
+  client.on("connect", () => {
+    console.log("✅ Tilkoblet EMQX Cloud");
+
+    // Foreløpig: abonner på et test-topic.
+    // Senere bytter vi til de faktiske DJI-topicene.
+    client.subscribe("test/avisafe", (err) => {
+      if (err) console.error("❌ Feil ved subscribe:", err);
+      else console.log("📡 Subscriber på topic test/avisafe");
+    });
+  });
+
+  client.on("message", async (topic, message) => {
+    try {
+      const text = message.toString();
+      console.log("📥 MQTT-melding:", topic, text);
+
+      // Når du vet hvordan DJI-payloaden ser ut, kan du gjøre noe ala:
+      // const payload = JSON.parse(text);
+      // await insertTelemetry({
+      //   drone_id: payload.data?.sn || "mqtt-drone",
+      //   lat: payload.data?.position?.latitude ?? null,
+      //   lon: payload.data?.position?.longitude ?? null,
+      //   alt: payload.data?.position?.altitude ?? null,
+      //   raw: payload,
+      // });
+    } catch (err) {
+      console.error("❌ Feil ved håndtering av MQTT-melding:", err);
+    }
+  });
+
+  client.on("error", (err) => {
+    console.error("❌ MQTT-feil:", err.message || err);
+  });
+}
+
 // ---- START SERVER ----
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log("✅ Server running on port", PORT);
   console.log("SUPABASE_URL:", SUPABASE_URL ? "OK" : "Mangler");
+  startMqtt();
 });
