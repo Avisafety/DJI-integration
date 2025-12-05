@@ -176,7 +176,30 @@ app.get("/dji/test", async (req, res) => {
       .json({ ok: false, error: err.response?.data || err.message });
   }
 });
+// ---- Hent siste posisjon per drone ----
+app.get("/telemetry/latest", async (req, res) => {
+  try {
+    const url = `${SUPABASE_URL}/rest/v1/latest_drone_positions?select=drone_id,lat,lon,alt,created_at`;
 
+    const response = await axios.get(url, {
+      headers: {
+        apikey: SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`
+      }
+    });
+
+    res.json({
+      ok: true,
+      count: response.data.length,
+      data: response.data
+    });
+  } catch (err) {
+    console.error("❌ Feil i /telemetry/latest:", err.response?.data || err.message);
+    res
+      .status(500)
+      .json({ ok: false, error: err.response?.data || err.message });
+  }
+});
 // ---- START SERVER ----
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
